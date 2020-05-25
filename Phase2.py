@@ -15,11 +15,25 @@ Starting State = System is empty
 import random
 import math
 from operator import itemgetter
+import seaborn as sb
+from matplotlib import pyplot as plt
 
 # pip install openpyxl
 import pandas as pd
 from pandas import ExcelWriter
 from pandas import ExcelFile
+
+sb.set()
+sb.set(style="whitegrid")
+plt.figure(figsize=(16, 9))
+
+stat_x = []
+recQ_stat_y = []
+foodQ_stat_y = []
+salQ_stat_y = []
+
+recOP_stat_y = []
+foodOP_stat_y = []
 
 
 def starting_state():
@@ -53,23 +67,32 @@ def starting_state():
     # t(enter Q3), t(left Q3), t(end FOOD),
     # t(END)]}
     data_collecting['Customers'] = dict()
+    data_collecting['lastCustomer'] = 1
 
     # Cumulative statistics
     cumulative_stat = dict()
-    cumulative_stat["recQueue Length"] = 0  # for Lq
-    cumulative_stat["recQueue Waiting Time"] = 0  # for Wq
-    cumulative_stat["recOP Busy Time"] = 0  # for p
+    cumulative_stat["recQueue Length"] = 0  # for Lrq
+    cumulative_stat["recQueue Waiting Time"] = 0  # for Wrq
+    cumulative_stat["recOP Busy Time"] = 0  # for Brq
 
-    cumulative_stat["foodQueue Length"] = 0  # for Lq
-    cumulative_stat["foodQueue Waiting Time"] = 0  # for Wq
-    cumulative_stat["foodOP Busy Time"] = 0  # for p
+    cumulative_stat["foodQueue Length"] = 0  # for Lfq
+    cumulative_stat["foodQueue Waiting Time"] = 0  # for Wfq
+    cumulative_stat["foodOP Busy Time"] = 0  # for Bfq
 
-    cumulative_stat["salQueue Length"] = 0  # for Lq
-    cumulative_stat["salQueue Waiting Time"] = 0  # for Wq
-    cumulative_stat["salOP Busy Time"] = 0  # for p
+    cumulative_stat["salQueue Length"] = 0  # for Lsq
+    cumulative_stat["salQueue Waiting Time"] = 0  # for Wsq
+    cumulative_stat["salOP Busy Time"] = 0  # for Bsq
+
+    cumulative_stat["Time in System"] = 0
 
     future_event_list = list()
-    FEL_maker(future_event_list, 'recQueue', 0, 'C1')  # Difference: make an entrance of specific customer (C1)
+    # Difference: make an entrance of specific customer (C1)
+    FEL_maker(future_event_list, 'recQueue', 0, 'C1')
+
+    # Car and Bus Entrance
+    if addBus:
+        FEL_maker(future_event_list, 'recQueueBus', 0, '-1')
+    FEL_maker(future_event_list, 'recQueueCar', 0, '-1')
 
     # Rec Rests
     FEL_maker(future_event_list, 'startRecRest', 50, '-1')
@@ -89,6 +112,10 @@ def starting_state():
 def FEL_maker(future_event_list, event_type, clock, customer):
     if event_type == "recQueue":
         event_time = clock + randTime_exp(3)
+    elif event_type == "recQueueCar":
+        event_time = clock + randTime_exp(5)
+    elif event_type == "recQueueBus":
+        event_time = clock + randTime_uniform(60, 180)
     elif event_type == "getRec":
         event_time = clock + randTime_tri(1, 2, 4) + randTime_tri(1, 2, 3)
     elif event_type == "startRecRest":
@@ -112,12 +139,13 @@ def FEL_maker(future_event_list, event_type, clock, customer):
     else:
         event_time = 0
 
+    # additional element in event notices (Customer No.)
     new_event = {'Event Type': event_type,
-                 'Event Time': round(event_time, 3), 'Customer': customer}  # additional element in event notices (Customer No.)
+                 'Event Time': round(event_time, 3), 'Customer': customer}
     future_event_list.append(new_event)
 
 
-def recQueue(future_event_list, state, data, clock, customer, cum_stat):
+def recQueue(future_event_list, state, data, clock, customer, cum_stat, create_next=True):
     data['Customers'][customer] = []  # Add a place for the new customer
 
     cum_stat['recQueue Length'] += state['recQ'] * (clock - data['EClock'])
@@ -133,26 +161,47 @@ def recQueue(future_event_list, state, data, clock, customer, cum_stat):
 
     # YES
     else:
-        cum_stat['recOP Busy Time'] += (clock - data['EClock'])  # Server is busy just before this time
         data['Customers'][customer] = [clock]  # T(ent) = clock
         state['recQ'] = state['recQ'] + 1
-        state['recQueue'][customer] = clock  # state['recQueue'] += 1
+        state['recQueue'][customer] = clock
 
     # put the current clock on the last event clock  for the next event (what a sentence :)) )
-    data['EClock'] = clock
+    advanceTime(data, clock)
 
-    # Extracting the customer num
-    customer_num = int(customer[1:])
-    customer_num += 1
-    FEL_maker(future_event_list, 'recQueue', clock, 'C' + str(customer_num))  # predict the next customer's Arrival
+    if create_next:
+        # Extracting the customer num
+        data['lastCustomer'] += 1
+        FEL_maker(future_event_list, 'recQueue', clock, 'C' + str(data['lastCustomer']))
+
+
+def carPassengers():
+    rand = random.random()
+    if 0.2 > rand > 0:
+        return 1
+    elif 0.5 > rand > 0.2:
+        return 2
+    elif 0.8 > rand > 0.5:
+        return 3
+    return 4
 
 
 def recQueueCar(future_event_list, state, data, clock, customer, cum_stat):
-    pass
+    passengers = carPassengers()
+    for i in range(0, passengers):
+        data['lastCustomer'] += 1
+        print('C' + str(data['lastCustomer']))
+        recQueue(future_event_list, state, data, clock, 'C' + str(data['lastCustomer']), cum_stat, False)
+    advanceTime(data, clock)
+    FEL_maker(future_event_list, 'recQueueCar', clock, '-1')
 
 
 def recQueueBus(future_event_list, state, data, clock, customer, cum_stat):
-    pass
+    passengers = randTime_poisson(30)
+    for i in range(0, passengers):
+        data['lastCustomer'] += 1
+        print('C' + str(data['lastCustomer']))
+        recQueue(future_event_list, state, data, clock, 'C' + str(data['lastCustomer']), cum_stat, False)
+    advanceTime(data, clock)
 
 
 def getRec(future_event_list, state, data, clock, customer, cum_stat):
@@ -187,12 +236,16 @@ def getRec(future_event_list, state, data, clock, customer, cum_stat):
 
             cum_stat["recQueue Waiting Time"] += (
                     data['Customers'][firstCustomer][1] - data['Customers'][firstCustomer][0])
+    advanceTime(data, clock)
 
 
 def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
     data['Customers'][customer].append(clock)
 
     cum_stat['foodQueue Length'] += state['foodQ'] * (clock - data['EClock'])
+    # cum_stat['foodOP Busy Time'] += state['foodOP'] * (clock - data['EClock'])
+
+    cum_stat['recOP Busy Time'] += data['Customers'][customer][2] - data['Customers'][customer][1]
 
     # Is the server busy?
     # NO
@@ -209,13 +262,12 @@ def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
 
     # YES
     else:
-        cum_stat['foodOP Busy Time'] += (clock - data['EClock'])  # Server is busy just before this time
+        # cum_stat['foodOP Busy Time'] += (clock - data['EClock'])
         data['Customers'][customer].append(clock)  # T(ent) = clock
         state['foodQ'] = state['foodQ'] + 1
         state['foodQueue'][customer] = clock  # state['Queue'] += 1
 
-    # put the current clock on the last event clock  for the next event (what a sentence :)) )
-    data['EClock'] = clock
+    advanceTime(data, clock)
 
 
 def getFood(future_event_list, state, data, clock, customer, cum_stat):
@@ -248,8 +300,7 @@ def getFood(future_event_list, state, data, clock, customer, cum_stat):
             # Delete the customer from queue
             del state['foodQueue'][firstCustomer]
 
-            cum_stat["foodQueue Waiting Time"] += (
-                    data['Customers'][firstCustomer][4] - data['Customers'][firstCustomer][3])
+    advanceTime(data, clock)
 
 
 def salQueue(future_event_list, state, data, clock, customer, cum_stat):
@@ -257,6 +308,8 @@ def salQueue(future_event_list, state, data, clock, customer, cum_stat):
 
     cum_stat['salQueue Length'] += state['salQ'] * (clock - data['EClock'])
 
+    cum_stat['foodOP Busy Time'] += data['Customers'][customer][5] - data['Customers'][customer][4]
+    cum_stat["foodQueue Waiting Time"] += data['Customers'][customer][4] - data['Customers'][customer][3]
     # Are the tables full
     # NO
     if state['salOP'] > 0:
@@ -270,18 +323,17 @@ def salQueue(future_event_list, state, data, clock, customer, cum_stat):
 
     # YES
     else:
-        cum_stat['salOP Busy Time'] += (clock - data['EClock'])  # Server is busy just before this time
         data['Customers'][customer].append(clock)  # T(ent) = clock
         state['salQ'] = state['salQ'] + 1
         state['salQueue'][customer] = clock  # state['Queue'] += 1
 
-    # put the current clock on the last event clock  for the next event (what a sentence :)) )
-    data['EClock'] = clock
+    advanceTime(data, clock)
 
 
 def endFood(future_event_list, state, data, clock, customer, cum_stat):
     data['Customers'][customer].append(clock)
 
+    cum_stat['recOP Busy Time'] += data['Customers'][customer][8] - data['Customers'][customer][7]
     # Send the customer off
     FEL_maker(future_event_list, "exitSys", clock, customer)
 
@@ -303,10 +355,12 @@ def endFood(future_event_list, state, data, clock, customer, cum_stat):
 
         cum_stat["salQueue Waiting Time"] += (
                 data['Customers'][firstCustomer][7] - data['Customers'][firstCustomer][6])
+    advanceTime(data, clock)
 
 
 def exitSys(future_event_list, state, data, clock, customer, cum_stat):
-    pass
+    cum_stat['Time in System'] += data['Customers'][customer][9] - data['Customers'][customer][0]
+    advanceTime(data, clock)
 
 
 def startRecRest(future_event_list, state, data, clock, cum_stat):
@@ -315,6 +369,7 @@ def startRecRest(future_event_list, state, data, clock, cum_stat):
         FEL_maker(future_event_list, 'endRecRest', clock, '-1')
     else:
         state['recRest'] = True
+    advanceTime(data, clock)
 
 
 def startFoodRest(future_event_list, state, data, clock, cum_stat):
@@ -323,6 +378,7 @@ def startFoodRest(future_event_list, state, data, clock, cum_stat):
         FEL_maker(future_event_list, 'endFoodRest', clock, '-1')
     else:
         state['foodRest'] = True
+    advanceTime(data, clock)
 
 
 def endRecRest(future_event_list, state, data, clock, cum_stat):
@@ -334,6 +390,7 @@ def endRecRest(future_event_list, state, data, clock, cum_stat):
         FEL_maker(future_event_list, 'getRec', clock, firstCustomer)
     else:
         state['unRecOP'] = state['unRecOP'] + 1
+    advanceTime(data, clock)
 
 
 def endFoodRest(future_event_list, state, data, clock, cum_stat):
@@ -345,6 +402,7 @@ def endFoodRest(future_event_list, state, data, clock, cum_stat):
         FEL_maker(future_event_list, 'getFood', clock, firstCustomer)
     else:
         state['unFoodOP'] = state['unFoodOP'] + 1
+    advanceTime(data, clock)
 
 
 def firstInRecQueue(state):
@@ -384,7 +442,19 @@ def randTime_tri(a, b, c):
 
 # Poisson dist
 def randTime_poisson(mean):
-    pass
+    n = 0
+    P = 1
+    e_alpha = math.e ** (-1 * mean)
+    while True:
+        newRandom = random.random()
+        P = P * newRandom
+
+        if P < e_alpha:
+            # Accepted
+            return n
+        else:
+            # Rejected
+            n = n + 1
 
 
 def delay(name):
@@ -395,7 +465,12 @@ def delay(name):
     return 0
 
 
+def advanceTime(data, clock):
+    data['EClock'] = clock
+
+
 def simulation(simulation_time):
+    maxFoodQ = 0
     state, data, future_event_list, cumulative_stat = starting_state()  # Starting state
     clock = 0
     future_event_list.append({'Event Type': 'End of Simulation', 'Event Time': simulation_time})  # Add specific events
@@ -439,41 +514,78 @@ def simulation(simulation_time):
                 endFoodRest(future_event_list, state, data, clock, cumulative_stat)
             future_event_list.remove(current_event)
 
+            if state['foodQ'] > maxFoodQ:
+                maxFoodQ = state['foodQ']
+
             print("CLOCK", data['EClock'])
+            print("CURRENT:", current_event['Event Type'], "CUSTOMER:", current_customer)
+            print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
+            print("STATE:", state)
+            print("CUSTOMERS:", data['Customers'])
+            print("CUMULATIVE STATS:", cumulative_stat)
+
+            print("\n")
+
+            stat_x.append(data['EClock'])
+
+            recQ_stat_y.append(state['recQ'])
+            foodQ_stat_y.append(state['foodQ'])
+
+        # Do the corrections
+        else:
+            future_event_list = []
+            print("CLOCK", clock)
             print("CURRENT:", current_event['Event Type'])
             print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
             print("STATE:", state)
             print("CUSTOMERS:", data['Customers'])
             print("CUMULATIVE STATS:", cumulative_stat)
+
             print("\n")
-
-            # # Writing to excel
-            # firstTime = True
-            # df = pd.DataFrame({'Clock': data['EClock'],
-            #                    'state': state,
-            #                    'Current Event': current_event['Event Type'],
-            #                    'Cumulative Stat': cumulative_stat
-            #                    })
-            # if firstTime:
-            #     df.to_csv('Output.csv', mode='a', index=False)
-            # else:
-            #     df.to_csv('Output.csv', mode='a', index=False, header=False)
-
-        # Do the corrections
-        else:
-            future_event_list = []
             # keys = [k for k in state['Queue']]
             # for key in keys:
             #     del data['Customers'][key]
-    #
+
     # Calculating the outputs
-    queue_len = cumulative_stat['recQueue Length'] / simulation_time
-    queue_waiting_time = cumulative_stat['recQueue Waiting Time'] / len(data['Customers'])
-    server_util = cumulative_stat['recOP Busy Time'] / simulation_time
-    print("Lq = " + str(queue_len) + "\nWq = " + str(queue_waiting_time) + "\np = " + str(server_util))
-    print("Little's Law is almost correct : " + str(queue_len / queue_waiting_time))  # Checking the little's law
+    meanLrq = cumulative_stat['recQueue Length'] / simulation_time
+    meanWrq = cumulative_stat['recQueue Waiting Time'] / len(data['Customers'])
+    meanBrq = cumulative_stat['recOP Busy Time'] / (simulation_time * 5)
+
+    meanLfq = cumulative_stat['foodQueue Length'] / simulation_time
+    meanWfq = cumulative_stat['foodQueue Waiting Time'] / len(data['Customers'])
+    meanBfq = cumulative_stat['foodOP Busy Time'] / (simulation_time * 2)
+
+    meanTimeInSystem = cumulative_stat['Time in System'] / len(data['Customers'])
+
+    # Management Request #1
+    print("Req1: Mean Time in System=", round(meanTimeInSystem, 3))
+    # Management Request #2
+    print("Req2: Mean Food Queue Waiting Time=", round(meanWfq, 3))
+    # Management Request #3
+    print("Req3: Maximum Food Queue Length=", maxFoodQ)
+    print("Req3: Mean Food Queue Length=", round(meanLfq, 3))
+    # Management Request #4
+    print("Req4: Mean Food Operator Busy Time=", round(meanBfq, 3))
+    print("Req4: Mean Reception Operator Busy Time=", round(meanBrq, 3))
+
+    print("Mean Reception Queue Length=", round(meanLrq, 3))
+    print("Mean Reception Queue Waiting Time=", round(meanWrq, 3))
+
+    temp_df = pd.DataFrame(
+        {
+            "X": stat_x,
+            "recQ": recQ_stat_y,
+            "foodQ": foodQ_stat_y
+        })
+    sb.lineplot(x='X', y='value', hue="variable", data=pd.melt(temp_df, ['X']))
+    plt.show()
 
     print("End!")
 
+
+addBus = True
+runStat = input("Warm-up mode? y/n")
+if runStat == "y":
+    addBus = False
 
 simulation(int(input("Enter the Simulation Time: ")))
