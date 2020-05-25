@@ -17,15 +17,15 @@ import math
 from operator import itemgetter
 import seaborn as sb
 from matplotlib import pyplot as plt
-
+import time as time
 # pip install openpyxl
 import pandas as pd
+import xlsxwriter as xw
 from pandas import ExcelWriter
 from pandas import ExcelFile
 
 sb.set()
 sb.set(style="whitegrid")
-plt.figure(figsize=(16, 9))
 
 stat_x = []
 recQ_stat_y = []
@@ -189,7 +189,7 @@ def recQueueCar(future_event_list, state, data, clock, customer, cum_stat):
     passengers = carPassengers()
     for i in range(0, passengers):
         data['lastCustomer'] += 1
-        print('C' + str(data['lastCustomer']))
+        # print('C' + str(data['lastCustomer']))
         recQueue(future_event_list, state, data, clock, 'C' + str(data['lastCustomer']), cum_stat, False)
     advanceTime(data, clock)
     FEL_maker(future_event_list, 'recQueueCar', clock, '-1')
@@ -199,7 +199,7 @@ def recQueueBus(future_event_list, state, data, clock, customer, cum_stat):
     passengers = randTime_poisson(30)
     for i in range(0, passengers):
         data['lastCustomer'] += 1
-        print('C' + str(data['lastCustomer']))
+        # print('C' + str(data['lastCustomer']))
         recQueue(future_event_list, state, data, clock, 'C' + str(data['lastCustomer']), cum_stat, False)
     advanceTime(data, clock)
 
@@ -243,7 +243,6 @@ def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
     data['Customers'][customer].append(clock)
 
     cum_stat['foodQueue Length'] += state['foodQ'] * (clock - data['EClock'])
-    # cum_stat['foodOP Busy Time'] += state['foodOP'] * (clock - data['EClock'])
 
     cum_stat['recOP Busy Time'] += data['Customers'][customer][2] - data['Customers'][customer][1]
 
@@ -262,7 +261,6 @@ def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
 
     # YES
     else:
-        # cum_stat['foodOP Busy Time'] += (clock - data['EClock'])
         data['Customers'][customer].append(clock)  # T(ent) = clock
         state['foodQ'] = state['foodQ'] + 1
         state['foodQueue'][customer] = clock  # state['Queue'] += 1
@@ -388,6 +386,7 @@ def endRecRest(future_event_list, state, data, clock, cum_stat):
 
         firstCustomer = firstInRecQueue(state)
         FEL_maker(future_event_list, 'getRec', clock, firstCustomer)
+        del state['recQueue'][firstCustomer]
     else:
         state['unRecOP'] = state['unRecOP'] + 1
     advanceTime(data, clock)
@@ -400,6 +399,7 @@ def endFoodRest(future_event_list, state, data, clock, cum_stat):
 
         firstCustomer = firstInFoodQueue(state)
         FEL_maker(future_event_list, 'getFood', clock, firstCustomer)
+        del state['foodQueue'][firstCustomer]
     else:
         state['unFoodOP'] = state['unFoodOP'] + 1
     advanceTime(data, clock)
@@ -469,8 +469,86 @@ def advanceTime(data, clock):
     data['EClock'] = clock
 
 
+def output_excel_pandas(future_event_list, state, row_num, cumulative_stat):
+    global output_df  # Use the dataframe global variable
+    global max_fel  # Use the max_fel global variable
+    future_event_list = sorted(future_event_list
+                               , key=lambda x: x['Event Time'])  # I add the current event so I don't need this
+    # This make the calculations much less
+    new_row = [row_num, future_event_list[0]['Event Type'], future_event_list[0]['Event Time'],  # Step, Current, Clock
+               state['recQ'], state['recOP'], state['unRecOP'], state['recRest'],  # Reception
+               state['foodQ'], state['foodOP'], state['unFoodOP'], state['foodRest'],  # Food
+               state['salQ'], state['salOP'],  # Saloon
+               cumulative_stat["recQueue Length"],
+               cumulative_stat["recQueue Waiting Time"],
+               cumulative_stat["recOP Busy Time"],
+
+               cumulative_stat["foodQueue Length"],
+               cumulative_stat["foodQueue Waiting Time"],
+               cumulative_stat["foodOP Busy Time"],
+
+               cumulative_stat["salQueue Length"],
+               cumulative_stat["salQueue Waiting Time"],
+               cumulative_stat["salOP Busy Time"],
+
+               cumulative_stat["Time in System"]
+               ]
+
+    # if we pass the max_fel size
+    if len(future_event_list) - 1 > max_fel:
+        # loop through the sorted fel to add the the new columns and their value (all of them but the current event)
+        for fel_counter in range(max_fel, len(future_event_list) - 1):
+            # create the new columns
+            output_df['Future Event Type ' + str(fel_counter + 1)] = ""
+            output_df['Future Event Time ' + str(fel_counter + 1)] = ""
+            fel_counter += 1
+        max_fel = len(future_event_list) - 1  # new max_fel
+
+    else:
+        # to match the length of row and columns
+        for counter in range(max_fel - len(future_event_list) + 1):
+            future_event_list.append({'Event Type': "", 'Event Time': ""})
+        # add needed values to new row
+    for fel in future_event_list[1:]:
+        new_row.extend((fel['Event Type'], fel['Event Time']))
+
+    # add the row at the end of the output dataframe
+    output_df.loc[len(output_df)] = new_row  # Search it on Google
+
+
+def excel_formatting_pandas():
+    excel_output = pd.ExcelWriter("Output_Pandas.xlsx", engine='xlsxwriter')  # create an excel file
+    output_df.to_excel(excel_output, sheet_name='Restaurant-Simulation', index=False)  # pour down the data in the excel
+    workbook = excel_output.book  # change the excel to a workbook object
+    worksheet = excel_output.sheets['Restaurant-Simulation']  # take the wanted sheet
+
+    # format for the header. Check out the website:
+    cell_format_header = workbook.add_format()
+    cell_format_header.set_align('center')
+    cell_format_header.set_align('vcenter')
+    cell_format_header.set_font('Times New Roman')
+    cell_format_header.set_bold(True)
+    worksheet.set_row(0, None, cell_format_header)
+
+    # align the whole excel to the center (I did this way may be there are other ways)
+    worksheet.set_column(0, 0, 5)
+    worksheet.set_column(1, 1, 13)
+    worksheet.set_column(2, 2, 9)
+    worksheet.set_column(3, 13, 20)
+    worksheet.set_column(14, 23, 27 )
+    worksheet.set_column(5, 4 + 2 * max_fel, 19)
+    cell_format = workbook.add_format()
+    cell_format.set_align('center')
+    for row in range(len(output_df)):
+        worksheet.set_row(row + 1, None, cell_format)
+
+    # Save the excel
+    excel_output.save()
+
+
 def simulation(simulation_time):
     maxFoodQ = 0
+    row_num = 1
     state, data, future_event_list, cumulative_stat = starting_state()  # Starting state
     clock = 0
     future_event_list.append({'Event Type': 'End of Simulation', 'Event Time': simulation_time})  # Add specific events
@@ -512,6 +590,9 @@ def simulation(simulation_time):
                 endRecRest(future_event_list, state, data, clock, cumulative_stat)
             elif current_event['Event Type'] == 'endFoodRest':
                 endFoodRest(future_event_list, state, data, clock, cumulative_stat)
+
+            output_excel_pandas(future_event_list, state, row_num, cumulative_stat)
+            row_num += 1
             future_event_list.remove(current_event)
 
             if state['foodQ'] > maxFoodQ:
@@ -526,6 +607,10 @@ def simulation(simulation_time):
 
             print("\n")
 
+            # print("foodQ:", state['foodQ'], "len(foodQueue):", len(state['foodQueue']))
+            # if state['foodQ'] != len(state['foodQueue']):
+            #     time.sleep(3)
+
             stat_x.append(data['EClock'])
 
             recQ_stat_y.append(state['recQ'])
@@ -533,7 +618,8 @@ def simulation(simulation_time):
 
         # Do the corrections
         else:
-            future_event_list = []
+            output_excel_pandas(future_event_list, state, row_num, cumulative_stat)
+            future_event_list.clear()
             print("CLOCK", clock)
             print("CURRENT:", current_event['Event Type'])
             print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
@@ -542,10 +628,8 @@ def simulation(simulation_time):
             print("CUMULATIVE STATS:", cumulative_stat)
 
             print("\n")
-            # keys = [k for k in state['Queue']]
-            # for key in keys:
-            #     del data['Customers'][key]
 
+    excel_formatting_pandas()
     # Calculating the outputs
     meanLrq = cumulative_stat['recQueue Length'] / simulation_time
     meanWrq = cumulative_stat['recQueue Waiting Time'] / len(data['Customers'])
@@ -577,15 +661,46 @@ def simulation(simulation_time):
             "recQ": recQ_stat_y,
             "foodQ": foodQ_stat_y
         })
+    plt.figure(figsize=(simulation_time / 10, 10))
     sb.lineplot(x='X', y='value', hue="variable", data=pd.melt(temp_df, ['X']))
     plt.show()
 
-    print("End!")
+    print("End of Simulation.")
 
 
 addBus = True
-runStat = input("Warm-up mode? y/n")
+runStat = input("Run simulation without BUS ENTRY? y/n")
 if runStat == "y":
     addBus = False
+
+# new_row = [row_num, future_event_list[0]['Event Type'], future_event_list[0]['Event Time'],  # Step, Current, Clock
+#            state['recQ'], state['recOP'], state['unRecOP'], state['recRest'],  # Reception
+#            state['foodQ'], state['foodOP'], state['unFoodOP'], state['foodRest'],  # Food
+#            state['salQ'], state['salOP'],  # Saloon
+#            cumulative_stat["recQueue Length"],
+#            cumulative_stat["recQueue Waiting Time"],
+#            cumulative_stat["recOP Busy Time"],
+#
+#            cumulative_stat["foodQueue Length"],
+#            cumulative_stat["foodQueue Waiting Time"],
+#            cumulative_stat["foodOP Busy Time"],
+#
+#            cumulative_stat["salQueue Length"],
+#            cumulative_stat["salQueue Waiting Time"],
+#            cumulative_stat["salOP Busy Time"],
+#
+#            cumulative_stat["Time in System"]
+#            ]
+max_fel = 0  # Maximum length that FEL get (the current event does not count in)
+header_list = ['Step', 'Current Event', 'Clock',
+               'in Rec Queue', 'Busy Rec Operators', 'Idle Rec Operators', 'Time for Rec to Rest?',
+               'in Food Queue', 'Busy Food Operators', 'Idle Food Operators', 'Time for Food to Rest?',
+               'in Saloon Queue', 'Taken Tables',
+               'c(Rec Queue Length)', 'c(Rec Queue Waiting Time)', 'c(Rec Operator Busy Time)',
+               'c(Food Queue Length)', 'c(Food Queue Waiting Time)', 'c(Food Operator Busy Time)',
+               'c(Saloon Queue Length)', 'c(Saloon Queue Waiting Time)', 'c(Table Occupation Time)',
+               'c(Time Spent in System)'
+               ]  # Headers at First
+output_df = pd.DataFrame(columns=header_list)  # Create a dataframe with the predefined headers
 
 simulation(int(input("Enter the Simulation Time: ")))
