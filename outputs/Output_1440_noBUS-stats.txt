@@ -1,0 +1,8 @@
+Req1: Mean Time in System= 7.829
+Req2: Mean Food Queue Waiting Time= 0.001
+Req3: Maximum Food Queue Length= 4
+Req3: Mean Food Queue Length= 0.017
+Req4: Mean Food Operator Busy Time= 0.107
+Req4: Mean Reception Operator Busy Time= 0.7
+Mean Reception Queue Length= 0.148
+Mean Reception Queue Waiting Time= 1.733
