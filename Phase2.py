@@ -62,7 +62,9 @@ warmup_header_list = ['Replication',
                       'Period',
                       'recQ', 'recOP',
                       'foodQ', 'foodOP',
-                      'salQ', 'salOP']
+                      'salQ', 'salOP',
+                      'recQueue Waiting Time', 'foodQueue Waiting Time'
+]
 warmUpData = pd.DataFrame(columns=warmup_header_list)
 
 replication_header_list = ['Replication',
@@ -686,20 +688,25 @@ def simulation(simulation_time, replication_number, replication_data, warmup_dat
                 print("\n")
 
         if clock > timePeriod * 15:
-            if replication_number == 0:
-                new_row = {'Replication': replication_number + 1,
-                           'Period': timePeriod + 1,
-                           'recQ': state['recQ'], 'recOP': state['recOP'],
-                           'foodQ': state['foodQ'], 'foodOP': state['foodOP'],
-                           'salQ': state['salQ'], 'salOP': state['salOP']}
-                warmup_data = warmup_data.append(new_row, ignore_index=True)
-            else:
-                warmup_data.iloc[timePeriod, 2] += state['recQ']
-                warmup_data.iloc[timePeriod, 3] += state['recOP']
-                warmup_data.iloc[timePeriod, 4] += state['foodQ']
-                warmup_data.iloc[timePeriod, 5] += state['foodOP']
-                warmup_data.iloc[timePeriod, 6] += state['salQ']
-                warmup_data.iloc[timePeriod, 7] += state['salOP']
+            # if replication_number == 0:
+            new_row = {
+                'Replication': replication_number + 1,
+                'Period': timePeriod + 1,
+                'recQ': state['recQ'], 'recOP': state['recOP'],
+                'foodQ': state['foodQ'], 'foodOP': state['foodOP'],
+                'salQ': state['salQ'], 'salOP': state['salOP'],
+
+                'recQueue Waiting Time': cumulative_stat['recQueue Waiting Time'] / len(data['Customers']),
+                'foodQueue Waiting Time': cumulative_stat['foodQueue Waiting Time'] / len(data['Customers'])
+            }
+            warmup_data = warmup_data.append(new_row, ignore_index=True)
+            # else:
+            #     warmup_data.iloc[timePeriod, 2] += state['recQ']
+            #     warmup_data.iloc[timePeriod, 3] += state['recOP']
+            #     warmup_data.iloc[timePeriod, 4] += state['foodQ']
+            #     warmup_data.iloc[timePeriod, 5] += state['foodOP']
+            #     warmup_data.iloc[timePeriod, 6] += state['salQ']
+            #     warmup_data.iloc[timePeriod, 7] += state['salOP']
             timePeriod += 1
 
     if LOG_EXCEL:
@@ -801,6 +808,8 @@ if LOG_EXCEL:
 simulationTime = (int(input("Enter the Simulation Time: ")))
 for i in range(0, replications):
     replicationData, warmUpData = simulation(simulationTime, i, replicationData, warmUpData)
+    # Sesitivity test
+    # STARTING_UNRECOP += 5
 
 newRow = {'Replication': 'MEAN:',
           'R1': replicationData['R1'].mean(),
