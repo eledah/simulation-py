@@ -16,6 +16,7 @@ import math
 import random
 
 import pandas as pd
+import numpy as np
 import seaborn as sb
 from matplotlib import pyplot as plt
 
@@ -25,8 +26,6 @@ pd.set_option('display.max_columns', 500)
 sb.set()
 sb.set(style="whitegrid")
 
-recOP_stat_y = []
-foodOP_stat_y = []
 
 # Starting state values
 STARTING_RECQ = 0
@@ -46,18 +45,27 @@ REST_TIME_SECOND = 110
 REST_TIME_THIRD = 170
 REST_TIME_FOURTH = 230
 
+TIME_OF_RESTING = 10
+
 # Customer not needed
 NO_CUSTOMER = '-1'
 
 # Clock begins at 0
 SIMULATION_STARTING_TIME = 0
 
+# Print all the simulation steps
 LOG_STEPS = False
 # Decides if an Excel output is generated
 LOG_EXCEL = True
+# Draw a chart output with recQ, foodQ and salQ over time
 LOG_CHART = False
+# Print Management request at the end of each replication
 LOG_REQ = False
+# Draw a chart output with warmup data
+LOG_WARMUP = False
 
+
+WARMUP_STEP = 30
 warmup_header_list = ['Replication',
                       'Period',
                       'recQ', 'recOP',
@@ -75,6 +83,11 @@ replication_header_list = ['Replication',
                            'R5'
                            ]
 replicationData = pd.DataFrame(columns=replication_header_list)
+
+# Global data collectors
+gData = dict()
+gData['warmup_y'] = []
+gData['warmup_x'] = []
 
 
 def starting_state():
@@ -95,23 +108,23 @@ def starting_state():
     state['foodRest'] = STARTING_FOODREST
     state['salOP'] = STARTING_SALOP
 
-    # Data Collecting Dict: saves the main 3 times of the customers and time of last event (for calculating Lq, p)
+    # Data Collecting Dict, saves the Previous clock, the customer times and so on
     data_collecting = dict()
 
     # The event clock
     data_collecting['EClock'] = SIMULATION_STARTING_TIME
 
-    # The customer {'Ci':
-    # [T(enter Q1), t(left Q1), t(get REC),
-    # t(enter Q2), t(left Q2), t(get FOOD),
-    # t(enter Q3), t(left Q3), t(end FOOD),
-    # t(END)]}
+    # The customer Time values in our system {'Ci':
+    # [t0(enter Q1), t1(left Q1), t2(get REC),
+    # t3(enter Q2), t4(left Q2), t5(get FOOD),
+    # t6(enter Q3), t7(left Q3), t8(end FOOD),
+    # t9(END)]}
     data_collecting['Customers'] = dict()
 
     # Keeps the number of our last entered customer
     data_collecting['lastCustomer'] = 1
 
-    # Chart data collectors
+    # Queue Chart data collectors
     data_collecting['stat_x'] = []
     data_collecting['recQ_stat_y'] = []
     data_collecting['foodQ_stat_y'] = []
@@ -170,7 +183,7 @@ def FEL_maker(future_event_list, event_type, clock, customer):
     elif event_type == "startRecRest":
         event_time = clock
     elif event_type == "endRecRest":
-        event_time = clock + 10
+        event_time = clock + TIME_OF_RESTING
     elif event_type == "foodQueue":
         event_time = clock + delay('recMove')
     elif event_type == "getFood":
@@ -178,7 +191,7 @@ def FEL_maker(future_event_list, event_type, clock, customer):
     elif event_type == "startFoodRest":
         event_time = clock
     elif event_type == "endFoodRest":
-        event_time = clock + 10
+        event_time = clock + TIME_OF_RESTING
     elif event_type == "salQueue":
         event_time = clock + delay('foodMove')
     elif event_type == "endFood":
@@ -201,7 +214,7 @@ def recQueue(future_event_list, state, data, clock, customer, cum_stat, create_n
     # Is the server busy?
     # NO
     if state['unRecOP'] > 0:
-        data['Customers'][customer] = [clock, clock]
+        data['Customers'][customer] = [clock, clock]  # log t0, t1
 
         # Make an operator busy
         state['recOP'] += 1
@@ -211,7 +224,7 @@ def recQueue(future_event_list, state, data, clock, customer, cum_stat, create_n
 
     # YES
     else:
-        data['Customers'][customer] = [clock]
+        data['Customers'][customer] = [clock]  # log t0
 
         # Add them to the Queue
         state['recQ'] += 1
@@ -228,11 +241,11 @@ def recQueue(future_event_list, state, data, clock, customer, cum_stat, create_n
 
 def carPassengers():
     rand = random.random()
-    if 0.2 > rand > 0:
+    if 0.2 > rand >= 0:
         return 1
-    elif 0.5 > rand > 0.2:
+    elif 0.5 > rand >= 0.2:
         return 2
-    elif 0.8 > rand > 0.5:
+    elif 0.8 > rand >= 0.5:
         return 3
     return 4
 
@@ -256,7 +269,7 @@ def recQueueBus(future_event_list, state, data, clock, cum_stat):
 
 def getRec(future_event_list, state, data, clock, customer, cum_stat):
     # Log the time
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t2
 
     # Send the customer off
     FEL_maker(future_event_list, "foodQueue", clock, customer)
@@ -280,7 +293,7 @@ def getRec(future_event_list, state, data, clock, customer, cum_stat):
 
             # Send in the next customer
             firstCustomer = firstInRecQueue(state)
-            data['Customers'][firstCustomer].append(clock)
+            data['Customers'][firstCustomer].append(clock)  # log t1
             FEL_maker(future_event_list, "getRec", clock, firstCustomer)
 
             # Delete the customer from queue
@@ -294,14 +307,12 @@ def getRec(future_event_list, state, data, clock, customer, cum_stat):
 
 
 def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
-    # Log the time
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t3
 
     # Is the server busy?
     # NO
     if state['unFoodOP'] > 0:
-        # T(ent) = T(left q) = clock
-        data['Customers'][customer].append(clock)
+        data['Customers'][customer].append(clock)  # log t4
         # Make 1 Operator Busy
         state['foodOP'] += 1
         state['unFoodOP'] -= 1
@@ -320,8 +331,7 @@ def foodQueue(future_event_list, state, data, clock, customer, cum_stat):
 
 
 def getFood(future_event_list, state, data, clock, customer, cum_stat):
-    # Log the time
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t5
 
     # Send the customer off
     FEL_maker(future_event_list, "salQueue", clock, customer)
@@ -346,7 +356,7 @@ def getFood(future_event_list, state, data, clock, customer, cum_stat):
 
             # Send in the next customer
             firstCustomer = firstInFoodQueue(state)
-            data['Customers'][firstCustomer].append(clock)
+            data['Customers'][firstCustomer].append(clock)  # log t4
             FEL_maker(future_event_list, "getFood", clock, firstCustomer)
 
             # Delete the customer from queue
@@ -359,13 +369,13 @@ def getFood(future_event_list, state, data, clock, customer, cum_stat):
 
 def salQueue(future_event_list, state, data, clock, customer, cum_stat):
     # Log the time
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t6
 
     # Are the tables full
     # NO
     if state['salOP'] > 0:
         # T(ent) = T(left q) = clock
-        data['Customers'][customer].append(clock)
+        data['Customers'][customer].append(clock)  # log t7
         # Make 1 Table Taken
         state['salOP'] -= 1
 
@@ -382,7 +392,7 @@ def salQueue(future_event_list, state, data, clock, customer, cum_stat):
 
 def endFood(future_event_list, state, data, clock, customer, cum_stat):
     # Log the time
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t8
 
     # Send the customer off
     FEL_maker(future_event_list, "exitSys", clock, customer)
@@ -397,7 +407,7 @@ def endFood(future_event_list, state, data, clock, customer, cum_stat):
 
         # Send in the next customer
         firstCustomer = firstInSalQueue(state)
-        data['Customers'][firstCustomer].append(clock)
+        data['Customers'][firstCustomer].append(clock)  # log t7
         FEL_maker(future_event_list, "endFood", clock, firstCustomer)
 
         # Delete the customer from queue
@@ -411,7 +421,7 @@ def endFood(future_event_list, state, data, clock, customer, cum_stat):
 
 
 def exitSys(data, clock, customer, cum_stat):
-    data['Customers'][customer].append(clock)
+    data['Customers'][customer].append(clock)  # log t9
     cum_stat['Time in System'] += (data['Customers'][customer][9] - data['Customers'][customer][0])
     advanceTime(data, clock)
 
@@ -441,7 +451,7 @@ def endRecRest(future_event_list, state, data, clock):
 
         firstCustomer = firstInRecQueue(state)
         FEL_maker(future_event_list, 'getRec', clock, firstCustomer)
-        data['Customers'][firstCustomer].append(clock)
+        data['Customers'][firstCustomer].append(clock)  # log t2
         del state['recQueue'][firstCustomer]
     else:
         state['unRecOP'] += 1
@@ -455,7 +465,7 @@ def endFoodRest(future_event_list, state, data, clock):
 
         firstCustomer = firstInFoodQueue(state)
         FEL_maker(future_event_list, 'getFood', clock, firstCustomer)
-        data['Customers'][firstCustomer].append(clock)
+        data['Customers'][firstCustomer].append(clock)  # log t5
         del state['foodQueue'][firstCustomer]
     else:
         state['unFoodOP'] += 1
@@ -602,7 +612,8 @@ def excel_formatting_pandas():
     excel_output.save()
 
 
-def simulation(simulation_time, replication_number, replication_data, warmup_data):
+def simulation(simulation_time, replication_number, replication_data, warmup_data, total_replication):
+    # random.seed(17)
     # Max number of people in Food Queue
     maxFoodQ = 0
     maxSalQ = 0
@@ -613,16 +624,16 @@ def simulation(simulation_time, replication_number, replication_data, warmup_dat
 
     state, data, future_event_list, cumulative_stat = starting_state()  # Starting state
     clock = 0
-    future_event_list.append({'Event Type': 'End of Simulation', 'Event Time': simulation_time})  # Add specific events
+
+    # Add the EoS event
+    future_event_list.append({'Event Type': 'End of Simulation', 'Event Time': simulation_time})
 
     # Continue till the simulation time ends
-    while clock < simulation_time:  # while current_event['Event Type'] != 'End of Simulation'
+    while clock < simulation_time:
 
         sorted_fel = sorted(future_event_list, key=lambda x: x['Event Time'])  # Sort the FEL based on event times
-        # sorted_fel = sorted(future_event_list, key=itemgetter(1))                 # Another way to sort
         current_event = sorted_fel[0]  # The first element is what happening now
         clock = current_event['Event Time']  # Move the time forward
-        # print(current_event['Event Type'])
 
         if clock < simulation_time:
             current_customer = current_event['Customer']
@@ -653,67 +664,63 @@ def simulation(simulation_time, replication_number, replication_data, warmup_dat
             elif current_event['Event Type'] == 'endFoodRest':
                 endFoodRest(future_event_list, state, data, clock)
 
-            if LOG_EXCEL:
-                output_excel_pandas(future_event_list, state, row_num, cumulative_stat)
-                row_num += 1
-
             future_event_list.remove(current_event)
 
-            if state['foodQ'] > maxFoodQ:
-                maxFoodQ = state['foodQ']
-
-            if state['salQ'] > maxSalQ:
-                maxSalQ = state['salQ']
-
-            if LOG_STEPS:
-                print("CLOCK", data['EClock'])
-                print("CURRENT:", current_event['Event Type'], "CUSTOMER:", current_customer)
-                print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
-                print("STATE:", state)
-                print("CUSTOMERS:", data['Customers'])
-                print("CUMULATIVE STATS:", cumulative_stat)
-                print("\n")
-
-            if LOG_CHART:
-                data['stat_x'].append(data['EClock'])
-                data['recQ_stat_y'].append(state['recQ'])
-                data['foodQ_stat_y'].append(state['foodQ'])
-                data['salQ_stat_y'].append(state['salQ'])
-
         else:
-            if LOG_EXCEL:
-                output_excel_pandas(future_event_list, state, row_num, cumulative_stat)
             future_event_list.clear()
-            if LOG_STEPS:
-                print("CLOCK", clock)
-                print("CURRENT:", current_event['Event Type'])
-                print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
-                print("STATE:", state)
-                print("CUSTOMERS:", data['Customers'])
-                print("CUMULATIVE STATS:", cumulative_stat)
-                print("\n")
 
-        if clock > timePeriod * 15:
-            # if replication_number == 0:
-            new_row = {
-                'Replication': replication_number + 1,
-                'Period': timePeriod + 1,
-                'recQ': state['recQ'], 'recOP': state['recOP'],
-                'foodQ': state['foodQ'], 'foodOP': state['foodOP'],
-                'salQ': state['salQ'], 'salOP': state['salOP'],
+        if state['foodQ'] > maxFoodQ:
+            maxFoodQ = state['foodQ']
 
-                'recQueue Waiting Time': cumulative_stat['recQueue Waiting Time'] / len(data['Customers']),
-                'foodQueue Waiting Time': cumulative_stat['foodQueue Waiting Time'] / len(data['Customers'])
-            }
-            warmup_data = warmup_data.append(new_row, ignore_index=True)
-            # else:
-            #     warmup_data.iloc[timePeriod, 2] += state['recQ']
-            #     warmup_data.iloc[timePeriod, 3] += state['recOP']
-            #     warmup_data.iloc[timePeriod, 4] += state['foodQ']
-            #     warmup_data.iloc[timePeriod, 5] += state['foodOP']
-            #     warmup_data.iloc[timePeriod, 6] += state['salQ']
-            #     warmup_data.iloc[timePeriod, 7] += state['salOP']
-            timePeriod += 1
+        if state['salQ'] > maxSalQ:
+            maxSalQ = state['salQ']
+
+        if LOG_STEPS:
+            print("CLOCK", data['EClock'])
+            print("CURRENT:", current_event['Event Type'], "CUSTOMER:", current_customer)
+            print("FEL:", sorted(future_event_list, key=lambda x: x['Event Time']))
+            print("STATE:", state)
+            print("CUSTOMERS:", data['Customers'])
+            print("CUMULATIVE STATS:", cumulative_stat)
+            print("\n")
+
+        if LOG_EXCEL:
+            output_excel_pandas(future_event_list, state, row_num, cumulative_stat)
+            row_num += 1
+
+        if LOG_CHART:
+            data['stat_x'].append(data['EClock'])
+            data['recQ_stat_y'].append(state['recQ'])
+            data['foodQ_stat_y'].append(state['foodQ'])
+            data['salQ_stat_y'].append(state['salQ'])
+
+        # Warm up data collection
+        if LOG_WARMUP:
+            if clock > timePeriod * WARMUP_STEP:
+                if replication_number == 0 and timePeriod == 0:
+                    if simulation_time % WARMUP_STEP == 0:
+                        totalPeriod = int(simulation_time / WARMUP_STEP)
+                    else:
+                        totalPeriod = int(simulation_time / WARMUP_STEP) + 1
+                    gData['warmup_y'] = np.zeros(shape=(total_replication, totalPeriod))
+
+                gData['warmup_y'][replication_number][timePeriod] = \
+                    (cumulative_stat['recQueue Waiting Time'] + cumulative_stat['recOP Busy Time']) / len(data['Customers'])
+
+                new_row = {
+                    'Replication': replication_number + 1,
+                    'Period': timePeriod + 1,
+                    'recQ': state['recQ'], 'recOP': state['recOP'],
+                    'foodQ': state['foodQ'], 'foodOP': state['foodOP'],
+                    'salQ': state['salQ'], 'salOP': state['salOP'],
+
+                    'recQueue Waiting Time': (cumulative_stat['recQueue Waiting Time']
+                                              + cumulative_stat['recOP Busy Time']) / len(data['Customers']),
+                    'foodQueue Waiting Time': (cumulative_stat['foodQueue Waiting Time']
+                                               + cumulative_stat['foodOP Busy Time']) / len(data['Customers'])
+                }
+                warmup_data = warmup_data.append(new_row, ignore_index=True)
+                timePeriod += 1
 
     if LOG_EXCEL:
         excel_formatting_pandas()
@@ -723,13 +730,13 @@ def simulation(simulation_time, replication_number, replication_data, warmup_dat
     # meanWrq = cumulative_stat['recQueue Waiting Time'] / len(data['Customers'])
     meanBrq = cumulative_stat['recOP Busy Time'] / (simulation_time * (STARTING_UNRECOP + STARTING_RECOP))
 
-    meanLfq = cumulative_stat['foodQueue Length'] / simulation_time
+    # meanLfq = cumulative_stat['foodQueue Length'] / simulation_time
     meanWfq = cumulative_stat['foodQueue Waiting Time'] / len(data['Customers'])
     meanBfq = cumulative_stat['foodOP Busy Time'] / (simulation_time * (STARTING_UNFOODOP + STARTING_FOODOP))
 
     meanLsq = cumulative_stat['salQueue Length'] / simulation_time
-    meanWsq = cumulative_stat['salQueue Waiting Time'] / len(data['Customers'])
-    meanBsq = cumulative_stat['salOP Busy Time'] / (simulation_time * STARTING_SALOP)
+    # meanWsq = cumulative_stat['salQueue Waiting Time'] / len(data['Customers'])
+    # meanBsq = cumulative_stat['salOP Busy Time'] / (simulation_time * STARTING_SALOP)
 
     meanTimeInSystem = cumulative_stat['Time in System'] / len(data['Customers'])
     if LOG_REQ:
@@ -750,22 +757,29 @@ def simulation(simulation_time, replication_number, replication_data, warmup_dat
 
     new_row = {'Replication': round(replication_number + 1, 0),
                'R1': round(meanTimeInSystem, 3),
-               'R2': round((cumulative_stat['foodQueue Waiting Time'] + cumulative_stat['foodOP Busy Time']) / len(data['Customers']), 3),
+               'R2': round((cumulative_stat['foodQueue Waiting Time'] + cumulative_stat['foodOP Busy Time']) / len(
+                   data['Customers']), 3),
                'R3_1': maxSalQ, 'R3_2': round(meanLsq, 3),
                'R4_1': round(meanBfq, 3), 'R4_2': round(meanBrq, 3),
-               'R5': round((cumulative_stat['recQueue Waiting Time'] + cumulative_stat['recOP Busy Time']) / len(data['Customers']), 3)}
+               'R5': round((cumulative_stat['recQueue Waiting Time'] + cumulative_stat['recOP Busy Time']) / len(
+                   data['Customers']), 3)}
     replication_data = replication_data.append(new_row, ignore_index=True)
 
     if LOG_CHART:
-        temp_df = pd.DataFrame(
+        temp_dataframe = pd.DataFrame(
             {
                 "X": data['stat_x'],
-                "recQ": data['recQ_stat_y'],
-                "foodQ": data['foodQ_stat_y'],
-                "salQ": data['salQ_stat_y']
+                "Reception Queue": data['recQ_stat_y'],
+                "Food Queue": data['foodQ_stat_y'],
+                "Saloon Queue": data['salQ_stat_y']
             })
-        plt.figure(figsize=(simulation_time / 10, 10))
-        sb.lineplot(x='X', y='value', hue="variable", data=pd.melt(temp_df, ['X']))
+        plt.figure(figsize=(simulation_time / 15, 7))
+        sb.lineplot(x='X', y='value', hue="variable", data=pd.melt(temp_dataframe, ['X']))
+        chartTitle = "Replication:" + str(replication_number + 1)\
+                     + ". Number of People in Queue. Resting Time:" + str(TIME_OF_RESTING)
+        plt.title(chartTitle)
+        chartFileName = "Replication#" + str(replication_number + 1) + "_Resting Time=" + str(TIME_OF_RESTING) + '.jpg'
+        plt.savefig(chartFileName, bbox_inches='tight', dpi=150)
         plt.show()
 
     if LOG_REQ:
@@ -798,12 +812,19 @@ elif chartStat == "n":
 else:
     LOG_CHART = False
 
+warmupStat = input("Draw warmup charts? y/n DEF=n")
+if warmupStat == "y":
+    LOG_WARMUP = True
+elif warmupStat == "n":
+    LOG_WARMUP = False
+else:
+    LOG_WARMUP = False
+
 replications = int(input("How many replications? "))
 
 if LOG_EXCEL:
     # Maximum length that FEL get (the current event does not count in)
     max_fel = 0
-
     # Excel file headers
     header_list = ['Step', 'Current Event', 'Clock',
                    'in Rec Queue', 'Busy Rec Operators', 'Idle Rec Operators', 'Time for Rec to Rest?',
@@ -818,11 +839,13 @@ if LOG_EXCEL:
 
 simulationTime = (int(input("Enter the Simulation Time: ")))
 for i in range(0, replications):
-    replicationData, warmUpData = simulation(simulationTime, i, replicationData, warmUpData)
+    replicationData, warmUpData = simulation(simulationTime, i, replicationData, warmUpData, replications)
     # Sesitivity test
     # STARTING_UNRECOP += 3
-    # STARTING_SALOP -= 3
+    # STARTING_SALOP -= 5
+    # TIME_OF_RESTING += 20
 
+# Calculating replications' Mean and Variance
 newRow = {'Replication': 'MEAN:',
           'R1': replicationData['R1'].mean(),
           'R2': replicationData['R2'].mean(),
@@ -840,6 +863,21 @@ newRow = {'Replication': 'Variance:',
 replicationData = replicationData.append(newRow, ignore_index=True)
 
 replicationData.to_excel('replication_output.xlsx', index=False)
-warmUpData.to_excel('warmup_output.xlsx', index=False)
+
+
+if LOG_WARMUP:
+    # Write the warmup data to excel
+    warmUpData.to_excel('warmup_output.xlsx', index=False)
+
+    # Draw the warmup graph
+    gData['warmup_x'] = np.arange(0, simulationTime, WARMUP_STEP)
+    temp_df = pd.DataFrame({"X": gData['warmup_x']})
+    for i in range(0, replications):
+        yCount = "R" + str(i + 1)
+        temp_df[yCount] = gData['warmup_y'][i]
+    plt.figure(figsize=(simulationTime / WARMUP_STEP, 10))
+    sb.lineplot(x='X', y='value', hue="variable", data=pd.melt(temp_df, ['X']))
+    plt.title("Mean Time in Reception")
+    plt.show()
 
 print('End of Program!')
